@@ -1,0 +1,11 @@
+venv/
+.env
+__pycache__/
+*.pyc
+chroma_db/
+data/
+preview/
+ocr_test/
+test/
+*.pdf
+.streamlit/secrets.toml
