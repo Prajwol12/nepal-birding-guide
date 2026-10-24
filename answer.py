@@ -60,8 +60,18 @@ def pick_model(client):
     return max(pool, key=version)
 
 
+def thinking_config(model):
+    """Keep the model's 'thinking' short: it is the main cause of slow answers."""
+    if model.startswith("gemini-2.5"):
+        return types.ThinkingConfig(thinking_budget=0)
+    return types.ThinkingConfig(thinking_level="low")
+
+
 def answer_question(retriever, client, model, history, question):
     """history: earlier messages as [{'role': 'user'|'assistant', 'content': str}]."""
+    import time
+    t0 = time.perf_counter()
+
     # a follow-up like "what does it sound like?" needs the bird from the previous question
     search_query = question
     if history and not retriever.find_species(question):
@@ -93,10 +103,23 @@ def answer_question(retriever, client, model, history, question):
     contents.append(types.Content(role="user", parts=[types.Part(
         text=f"SOURCES:\n{format_context(r['chunks'])}\n\nQUESTION: {question}")]))
 
+    t1 = time.perf_counter()
+    debug["retrieval_s"] = round(t1 - t0, 1)
+
     try:
-        response = client.models.generate_content(
-            model=model, contents=contents,
-            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, temperature=0.2))
+        try:
+            response = client.models.generate_content(
+                model=model, contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT, temperature=0.2,
+                    thinking_config=thinking_config(model)))
+        except Exception as e:
+            if "thinking" not in str(e).lower():
+                raise
+            # this model or library version does not accept the thinking setting: ask without it
+            response = client.models.generate_content(
+                model=model, contents=contents,
+                config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, temperature=0.2))
         text = response.text or "The model returned an empty answer. Please try rephrasing your question."
     except Exception as e:
         msg = str(e)
@@ -107,4 +130,6 @@ def answer_question(retriever, client, model, history, question):
             text = f"Sorry, something went wrong while writing the answer ({type(e).__name__}). Please try again."
         sources = []
         debug["error"] = msg[:300]
+
+    debug["gemini_s"] = round(time.perf_counter() - t1, 1)
     return {"text": text, "sources": sources, "debug": debug}
